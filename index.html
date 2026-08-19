@@ -418,10 +418,12 @@ function todayISO() {
 }
 
 function logCompletion(k, dayId, idx, exEl) {
-  const today = todayISO();
-  const existing = history.find(h => h.key === k && h.date === today);
+  // grava com a data do dia da semana correspondente (a mesma mostrada na aba),
+  // não a data real em que você tocou no checkbox — assim "segunda" sempre vira 17/08, etc.
+  const entryDate = WEEK_ISO[dayId] || todayISO();
+  const existing = history.find(h => h.key === k && h.date === entryDate);
   const entry = {
-    key: k, date: today, dayId, idx,
+    key: k, date: entryDate, dayId, idx,
     name: exEl.dataset.name,
     group: exEl.dataset.group,
     sets: parseInt(exEl.dataset.sets, 10) || 1,
@@ -433,14 +435,16 @@ function logCompletion(k, dayId, idx, exEl) {
 }
 
 function removeTodayCompletion(k) {
-  const today = todayISO();
-  history = history.filter(h => !(h.key === k && h.date === today));
+  const dayId = k.split('_')[0];
+  const entryDate = WEEK_ISO[dayId] || todayISO();
+  history = history.filter(h => !(h.key === k && h.date === entryDate));
   saveHistory(history);
 }
 
 function updateTodayLoad(k) {
-  const today = todayISO();
-  const existing = history.find(h => h.key === k && h.date === today);
+  const dayId = k.split('_')[0];
+  const entryDate = WEEK_ISO[dayId] || todayISO();
+  const existing = history.find(h => h.key === k && h.date === entryDate);
   if (existing) {
     existing.load = state[k].load ? parseFloat(state[k].load) : null;
     saveHistory(history);
@@ -461,12 +465,17 @@ function getMondayOfCurrentWeek() {
 function formatDDMM(d) {
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
 }
+function formatISO(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
 const WEEK_MONDAY = getMondayOfCurrentWeek();
-const WEEK_DATES = {}; // dayId -> "DD/MM"
+const WEEK_DATES = {}; // dayId -> "DD/MM" (exibição)
+const WEEK_ISO = {};   // dayId -> "YYYY-MM-DD" (usado no histórico/relatórios)
 Object.keys(DAY_OFFSET).forEach(id => {
   const d = new Date(WEEK_MONDAY);
   d.setDate(WEEK_MONDAY.getDate() + DAY_OFFSET[id]);
   WEEK_DATES[id] = formatDDMM(d);
+  WEEK_ISO[id] = formatISO(d);
 });
 function isToday(dayId) {
   const todayOffset = (new Date().getDay() + 6) % 7; // seg=0 ... dom=6
@@ -824,10 +833,9 @@ function renderLoadChart(exerciseName) {
 }
 
 function backfillHistory() {
-  // migração: exercícios marcados como "feito" antes da função de histórico existir
-  // não geraram registro — cria retroativamente (com data de hoje) pra não sumir do relatório
+  // migração 1: exercícios marcados como "feito" antes da função de histórico existir
+  // não tinham nenhum registro — cria usando a data do dia da semana correspondente
   let changed = false;
-  const today = todayISO();
   DAYS.forEach(day => {
     day.rows.forEach((row, idx) => {
       const k = exKey(day.id, idx);
@@ -837,7 +845,7 @@ function backfillHistory() {
       if (already) return;
       const [name, sets, , , group] = row;
       history.push({
-        key: k, date: today, dayId: day.id, idx,
+        key: k, date: WEEK_ISO[day.id] || todayISO(), dayId: day.id, idx,
         name, group,
         sets: parseInt(sets, 10) || 1,
         load: st.load ? parseFloat(st.load) : null,
@@ -845,6 +853,27 @@ function backfillHistory() {
       });
       changed = true;
     });
+  });
+  if (changed) saveHistory(history);
+}
+
+function reconcileHistoryDates() {
+  // migração 2: registros gravados ANTES da correção (usavam a data real em que o
+  // checkbox foi tocado, não a data do dia da semana) podem ter caído no dia da semana
+  // errado — ex: um registro de "segunda" com data que não é uma segunda-feira.
+  // Corrige pra data do dia certo, assumindo que pertence à semana atual.
+  let changed = false;
+  history.forEach(h => {
+    if (!h.dayId || !(h.dayId in DAY_OFFSET) || !h.date) return;
+    const d = new Date(h.date + 'T00:00:00');
+    if (isNaN(d.getTime())) return;
+    const actualOffset = (d.getDay() + 6) % 7; // seg=0 ... dom=6
+    const expectedOffset = DAY_OFFSET[h.dayId];
+    if (actualOffset !== expectedOffset) {
+      h.date = WEEK_ISO[h.dayId] || h.date;
+      h.dateCorrected = true;
+      changed = true;
+    }
   });
   if (changed) saveHistory(history);
 }
@@ -861,6 +890,7 @@ buildDayPanels();
 buildWeekGrid();
 attachHandlers();
 DAYS.forEach(d => updateDayProgress(d.id));
+reconcileHistoryDates();
 backfillHistory();
 populateExerciseSelect();
 renderGroupChart(7);
