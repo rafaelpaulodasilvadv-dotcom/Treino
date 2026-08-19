@@ -78,13 +78,24 @@ header h1 {
 .tab.active {
   background: #d21a1a; color: #0d0d0d; border-color: #d21a1a;
 }
+.tab.today:not(.active) { border-color: #d21a1a; box-shadow: 0 0 8px rgba(210,26,26,0.5); }
 .tab .sub { display:block; font-size: 11px; opacity: 0.75; letter-spacing: 0.5px; }
+.tab .tab-date { font-size: 12px; opacity: 0.7; }
 
 /* ---------- MAIN ---------- */
 main { position: relative; z-index: 2; padding: 22px 18px 10px; }
 .day-panel { display: none; }
 .day-panel.active { display: block; }
 
+.day-date-row {
+  font-family: 'Bebas', sans-serif; font-size: 15px; letter-spacing: 1.5px;
+  color: #8a857c; margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
+}
+.day-date-row .day-date-val { color: #d21a1a; }
+.today-badge {
+  background: #d21a1a; color: #0d0d0d; font-family:'Bebas'; font-size: 11px;
+  letter-spacing: 1.5px; padding: 3px 9px;
+}
 .day-focus {
   font-size: 14px; color: #a8a29b; margin-bottom: 18px; line-height: 1.4;
 }
@@ -252,6 +263,7 @@ main { position: relative; z-index: 2; padding: 22px 18px 10px; }
 }
 .week-card.today { border-color: #d21a1a; }
 .week-card .wd { font-family:'Bebas'; font-size: 12px; color:#8a857c; letter-spacing: 1px; }
+.week-card .wdate { color: #d21a1a; }
 .week-card .wt { font-family:'Anton'; font-size: 20px; color: #f2efe8; margin: 4px 0; }
 .week-card .wp { font-family:'Bebas'; font-size: 12px; color: #d21a1a; }
 .week-ring { width: 30px; height: 30px; margin: 6px auto 0; position: relative; }
@@ -298,13 +310,14 @@ main { position: relative; z-index: 2; padding: 22px 18px 10px; }
   <div id="panel-week" class="day-panel">
     <div class="progress-label">SEMANA — PROGRESSO GERAL</div>
     <div class="week-grid" id="weekGrid"></div>
-    <button class="reset-btn" id="resetBtn">RESETAR PROGRESSO DA SEMANA</button>
+    <button class="reset-btn" id="resetBtn">RESETAR CHECKBOXES DA SEMANA</button>
   </div>
 
   <div id="panels-days"></div>
 
   <div id="panel-dom" class="day-panel">
-    <div class="rec-lead">DOMINGO — Recuperação ativa. Caminhada leve (30–40 min), mobilidade articular, alongamento. Sem carga, sem intensidade.</div>
+    <div class="day-date-row">DOMINGO · <span class="day-date-val" id="domDateVal"></span><span class="today-badge" id="domTodayBadge" style="display:none;">HOJE</span></div>
+    <div class="rec-lead">Recuperação ativa. Caminhada leve (30–40 min), mobilidade articular, alongamento. Sem carga, sem intensidade.</div>
     <div class="rec-block">
       <h3>CARDIO</h3>
       <ul>
@@ -436,17 +449,42 @@ function updateTodayLoad(k) {
 
 function exKey(dayId, idx) { return dayId + "_" + idx; }
 
+/* ---------- CALENDÁRIO REAL DA SEMANA ---------- */
+const DAY_OFFSET = { seg:0, ter:1, qua:2, qui:3, sex:4, sab:5, dom:6 };
+function getMondayOfCurrentWeek() {
+  const d = new Date();
+  const dow = d.getDay(); // 0=dom,1=seg,...6=sáb
+  const diff = (dow === 0 ? -6 : 1 - dow);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+  return monday;
+}
+function formatDDMM(d) {
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+}
+const WEEK_MONDAY = getMondayOfCurrentWeek();
+const WEEK_DATES = {}; // dayId -> "DD/MM"
+Object.keys(DAY_OFFSET).forEach(id => {
+  const d = new Date(WEEK_MONDAY);
+  d.setDate(WEEK_MONDAY.getDate() + DAY_OFFSET[id]);
+  WEEK_DATES[id] = formatDDMM(d);
+});
+function isToday(dayId) {
+  const todayOffset = (new Date().getDay() + 6) % 7; // seg=0 ... dom=6
+  return DAY_OFFSET[dayId] === todayOffset;
+}
+
 function buildTabs() {
   const tabs = document.getElementById('tabs');
   const items = [{id:'week', weekday:'SEMANA', tag:'VISÃO GERAL'}]
-    .concat(DAYS.map(d => ({id:d.id, weekday:d.weekday, tag:d.tag})))
-    .concat([{id:'dom', weekday:'DOMINGO', tag:'RECUPERAÇÃO'}])
+    .concat(DAYS.map(d => ({id:d.id, weekday:d.weekday, tag:d.tag, date: WEEK_DATES[d.id]})))
+    .concat([{id:'dom', weekday:'DOMINGO', tag:'RECUPERAÇÃO', date: WEEK_DATES['dom']}])
     .concat([{id:'rel', weekday:'RELATÓRIOS', tag:'VOLUME & CARGA'}]);
   items.forEach(it => {
     const el = document.createElement('div');
-    el.className = 'tab' + (it.id === 'week' ? ' active' : '');
+    el.className = 'tab' + (it.id === 'week' ? ' active' : '') + (it.date && isToday(it.id) ? ' today' : '');
     el.dataset.tab = it.id;
-    el.innerHTML = it.weekday + '<span class="sub">' + it.tag + '</span>';
+    const label = it.date ? `${it.weekday} <span class="tab-date">${it.date}</span>` : it.weekday;
+    el.innerHTML = label + '<span class="sub">' + it.tag + '</span>';
     el.addEventListener('click', () => switchTab(it.id));
     tabs.appendChild(el);
   });
@@ -459,7 +497,8 @@ function buildDayPanels() {
     panel.className = 'day-panel';
     panel.id = 'panel-' + day.id;
 
-    let html = '<div class="day-focus">' + day.focus + '</div>';
+    let html = `<div class="day-date-row">${day.weekday} · <span class="day-date-val">${WEEK_DATES[day.id]}</span>${isToday(day.id) ? '<span class="today-badge">HOJE</span>' : ''}</div>`;
+    html += '<div class="day-focus">' + day.focus + '</div>';
     html += '<div class="progress-bar"><div class="fill" id="fill-' + day.id + '"></div></div>';
 
     day.rows.forEach((row, idx) => {
@@ -501,10 +540,10 @@ function buildWeekGrid() {
     const pct = total ? done/total : 0;
     const r = 12, c = 2*Math.PI*r;
     const card = document.createElement('div');
-    card.className = 'week-card';
+    card.className = 'week-card' + (isToday(day.id) ? ' today' : '');
     card.dataset.tab = day.id;
     card.innerHTML = `
-      <div class="wd">${day.weekday}</div>
+      <div class="wd">${day.weekday} <span class="wdate">${WEEK_DATES[day.id]}</span></div>
       <div class="wt">${day.tag}</div>
       <div class="week-ring">
         <svg width="30" height="30">
@@ -573,8 +612,8 @@ function attachHandlers() {
     });
   });
   document.getElementById('resetBtn').addEventListener('click', () => {
-    if (confirm('Resetar as marcações da semana? O histórico usado nos relatórios (grupo muscular e evolução de carga) NÃO é apagado — só os checkboxes.')) {
-      state = {};
+    if (confirm('Resetar os checkboxes da semana? As cargas anotadas continuam salvas (não são apagadas), e o histórico dos relatórios também não é afetado.')) {
+      Object.keys(state).forEach(k => { if (state[k]) state[k].done = false; });
       saveState(state);
       location.reload();
     }
@@ -810,6 +849,13 @@ function backfillHistory() {
   if (changed) saveHistory(history);
 }
 
+function fillDomDate() {
+  const el = document.getElementById('domDateVal');
+  const badge = document.getElementById('domTodayBadge');
+  if (el) el.textContent = WEEK_DATES['dom'];
+  if (badge) badge.style.display = isToday('dom') ? 'inline-block' : 'none';
+}
+
 buildTabs();
 buildDayPanels();
 buildWeekGrid();
@@ -818,6 +864,7 @@ DAYS.forEach(d => updateDayProgress(d.id));
 backfillHistory();
 populateExerciseSelect();
 renderGroupChart(7);
+fillDomDate();
 switchTab('week');
 </script>
 </body>
